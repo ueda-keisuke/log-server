@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  log-collector:
+    build: .
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=4000
+      - SQLITE_DB_PATH=/app/data/logs.db
+    restart: unless-stopped
