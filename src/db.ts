@@ -1,36 +1,14 @@
-import { Database as SQLite3DB, Statement } from 'sqlite3';
 import { Database, open } from 'sqlite';
-
-export interface LogEntry {
-    threadId: string;
-    level: 'debug' | 'info' | 'warn' | 'error';
-    message: string;
-    metadata?: Record<string, any>;
-}
-
-export interface Thread {
-    threadId: string;
-    logCount: number;
-    startedAt: string;
-    lastUpdated: string;
-}
-
-export interface LogRecord {
-    id: number;
-    thread_id: string;
-    level: string;
-    message: string;
-    metadata: string | null;
-    created_at: string;
-}
+import sqlite3 from 'sqlite3';
+import { CollectorLogEntry, LogRecord, Thread } from "./types";
 
 export class LogDatabase {
-    private db: Database<SQLite3DB, Statement> | null = null;
+    private db: Database | null = null;
 
     async connect(): Promise<void> {
         this.db = await open({
             filename: process.env.SQLITE_DB_PATH || './logs.db',
-            driver: SQLite3DB
+            driver: sqlite3.Database
         });
 
         await this.db.exec(`
@@ -47,14 +25,19 @@ export class LogDatabase {
         `);
     }
 
-    async insertLog(log: LogEntry): Promise<void> {
+    async insertLog(log: CollectorLogEntry): Promise<void> {
         if (!this.db) throw new Error('Database not connected');
+
+        const message = log.message ||
+            (typeof log.metadata === 'object' ?
+                JSON.stringify(log.metadata) :
+                'No message provided');
 
         await this.db.run(
             'INSERT INTO logs (thread_id, level, message, metadata) VALUES (?, ?, ?, ?)',
             log.threadId,
             log.level,
-            log.message,
+            message,
             log.metadata ? JSON.stringify(log.metadata) : null
         );
     }
@@ -68,16 +51,16 @@ export class LogDatabase {
             startedAt: string;
             lastUpdated: string;
         }[]>(`
-      SELECT 
-        thread_id as threadId,
-        COUNT(*) as logCount,
-        MIN(created_at) as startedAt,
-        MAX(created_at) as lastUpdated
-      FROM logs 
-      GROUP BY thread_id 
-      ORDER BY MAX(created_at) DESC
-      LIMIT 100
-    `);
+            SELECT 
+                thread_id as threadId,
+                COUNT(*) as logCount,
+                MIN(created_at) as startedAt,
+                MAX(created_at) as lastUpdated
+            FROM logs 
+            GROUP BY thread_id 
+            ORDER BY MAX(created_at) DESC
+            LIMIT 100
+        `);
 
         return results;
     }
@@ -85,12 +68,21 @@ export class LogDatabase {
     async getThreadLogs(threadId: string): Promise<LogRecord[]> {
         if (!this.db) throw new Error('Database not connected');
 
-        const logs = await this.db.all<LogRecord[]>(
-            `SELECT * FROM logs WHERE thread_id = ? ORDER BY created_at ASC`,
+        type RawLogRecord = {
+            id: number;
+            thread_id: string;
+            level: string;
+            message: string;
+            metadata: string | null;
+            created_at: string;
+        };
+
+        const logs = await this.db.all<RawLogRecord[]>(
+            'SELECT * FROM logs WHERE thread_id = ? ORDER BY created_at ASC',
             threadId
         );
 
-        return logs.map(log => ({
+        return logs.map((log: RawLogRecord) => ({
             ...log,
             metadata: log.metadata ? JSON.parse(log.metadata) : null
         }));
@@ -106,5 +98,12 @@ export class LogDatabase {
             'DELETE FROM logs WHERE created_at < ?',
             thirtyDaysAgo.toISOString()
         );
+    }
+
+    async close(): Promise<void> {
+        if (this.db) {
+            await this.db.close();
+            this.db = null;
+        }
     }
 }
