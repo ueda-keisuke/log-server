@@ -6,6 +6,8 @@ export class LogDatabase {
     private db: Database | null = null;
 
     async connect(): Promise<void> {
+
+        console.log('Connecting to database:,', process.env.SQLITE_DB_PATH || './logs.db');
         this.db = await open({
             filename: process.env.SQLITE_DB_PATH || './logs.db',
             driver: sqlite3.Database
