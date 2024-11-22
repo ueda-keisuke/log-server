@@ -1,30 +1,66 @@
 import { Database, open } from 'sqlite';
 import sqlite3 from 'sqlite3';
 import { CollectorLogEntry, LogRecord, Thread } from "./types";
+import * as path from "node:path";
+import * as fs from "node:fs";
+
+// SQLiteErrorの型定義
+interface SQLiteError extends Error {
+    code?: string;
+    errno?: number;
+}
 
 export class LogDatabase {
     private db: Database | null = null;
 
     async connect(): Promise<void> {
+        try {
+            const dbPath = process.env.SQLITE_DB_PATH || './logs.db';
 
-        console.log('Connecting to database:,', process.env.SQLITE_DB_PATH || './logs.db');
-        this.db = await open({
-            filename: process.env.SQLITE_DB_PATH || './logs.db',
-            driver: sqlite3.Database
-        });
+            console.log('Database connection attempt:', {
+                path: dbPath,
+                absolutePath: path.resolve(dbPath),
+                exists: fs.existsSync(dbPath),
+                dirExists: fs.existsSync(path.dirname(dbPath)),
+                permissions: fs.existsSync(dbPath) ?
+                    fs.statSync(dbPath).mode.toString(8) : 'N/A'
+            });
 
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS logs (
-                                                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                thread_id TEXT NOT NULL,
-                                                level TEXT NOT NULL,
-                                                message TEXT NOT NULL,
-                                                metadata TEXT,
-                                                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_thread_id ON logs(thread_id);
-            CREATE INDEX IF NOT EXISTS idx_created_at ON logs(created_at);
-        `);
+            this.db = await open({
+                filename: dbPath,
+                driver: sqlite3.Database
+            });
+
+            await this.db.exec(`
+                CREATE TABLE IF NOT EXISTS logs (
+                                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                    thread_id TEXT NOT NULL,
+                                                    level TEXT NOT NULL,
+                                                    message TEXT NOT NULL,
+                                                    metadata TEXT,
+                                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_thread_id ON logs(thread_id);
+                CREATE INDEX IF NOT EXISTS idx_created_at ON logs(created_at);
+            `);
+        } catch (error: unknown) {
+            const dbError = error as SQLiteError;
+            console.error('Database connection error:', {
+                error: {
+                    message: dbError.message,
+                    code: dbError.code,
+                    errno: dbError.errno,
+                    stack: dbError.stack
+                },
+                env: {
+                    pwd: process.cwd(),
+                    uid: process.getuid?.(),
+                    gid: process.getgid?.(),
+                    dbPath: process.env.SQLITE_DB_PATH
+                }
+            });
+            throw error;
+        }
     }
 
     async insertLog(log: CollectorLogEntry): Promise<void> {

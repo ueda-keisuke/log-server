@@ -6,6 +6,11 @@ import { LogEntry } from './types';
 const app = express();
 const db = new LogDatabase();
 
+interface ErrorWithDetails extends Error {
+    code?: string;
+    stack?: string;
+}
+
 app.use(express.json());
 app.use(cors());
 
@@ -43,16 +48,36 @@ app.get('/threads/:threadId/logs', async (req, res) => {
     }
 });
 
+// startup関数も修正
 async function startup() {
-    await db.connect();
+    try {
+        await db.connect();
 
-    // 定期的なクリーンアップ処理
-    setInterval(() => db.cleanup(), 24 * 60 * 60 * 1000); // 毎日実行
+        setInterval(() => {
+            db.cleanup().catch((err: unknown) => {
+                const error = err as ErrorWithDetails;
+                console.error('Cleanup error:', {
+                    message: error.message || 'Unknown error',
+                    code: error.code,
+                    stack: error.stack
+                });
+            });
+        }, 24 * 60 * 60 * 1000);
 
-    const port = process.env.PORT || 4000;
-    app.listen(port, () => {
-        console.log(`Log collector running on port ${port}`);
-    });
+        const port = process.env.PORT || 4000;
+        app.listen(port, () => {
+            console.log(`Log collector running on port ${port}`);
+        });
+    } catch (err: unknown) {
+        const error = err as ErrorWithDetails;
+        console.error('Startup error:', {
+            message: error.message || 'Unknown error',
+            code: error.code,
+            stack: error.stack
+        });
+
+        process.exit(1);
+    }
 }
 
 startup();
